@@ -1,0 +1,167 @@
+--- STM8S_SPL_2.2.0/Libraries/STM8S_StdPeriph_Driver/src/stm8s_flash.c	2014-10-21 18:32:20.000000000 +0200
++++ STM8S_SPL_2.2.0_SDCC/Libraries/STM8S_StdPeriph_Driver/src/stm8s_flash.c	2015-02-23 18:33:10.000000000 +0100
+@@ -71,9 +71,82 @@
+ #define OPERATION_TIMEOUT   ((uint16_t)0xFFFF)
+ /* Private macro -------------------------------------------------------------*/
+ /* Private variables ---------------------------------------------------------*/
++
++// SDCC patch: for passing args to inline ASM (SDCC doesn't support far pointers yet)
++#if defined (_SDCC_)    
++  uint32_t    asm_addr;      // 16b/24b address
++  uint8_t     asm_val;       // 1B data for r/w data
++#endif // _SDCC_
++
+ /* Private function prototypes -----------------------------------------------*/
++
++// SDCC patch: r/w for 16b/24b addresses (SDCC doesn't support far pointers yet)
++#if defined (_SDCC_)    
++  void      write_byte_address(uint16_t Address, uint8_t Data);   // write single byte to 16b/24b address
++  uint8_t   read_byte_address(uint32_t Address);                  // read single byte from 16b/24b address
++#endif // _SDCC_
++
+ /* Private Constants ---------------------------------------------------------*/
+ 
++/** @addtogroup FLASH_Private_functions
++  * @{
++  */
++
++#if defined (_SDCC_)    
++/**
++  * @brief  write single byte to address
++  * @note   is required for SDCC, which doesn't yet support far pointers.
++  *         For simplicity 16- and 24-bit pointers are treated identically.
++  * @param  Address : Address of the byte to copy
++  *         Data :    Value to be copied
++  * @retval None
++  */
++void write_byte_address(uint16_t Address, uint8_t Data)
++{
++  /* store address & data globally for assember */
++  asm_addr = Address;
++  asm_val  = Data;
++
++  /* use inline assembler to write to 16b/24b address */
++__asm
++  ld	a,_asm_val
++  ldf	[_asm_addr+1].e,a
++__endasm;
++
++}
++
++
++/**
++  * @brief  Reads any byte from flash memory
++  * @note   is required for SDCC, which doesn't yet support far pointers.
++  *         For simplicity 16- and 24-bit pointers are treated identically.
++  * @param  Address : Address to read
++  * @retval Value of the byte
++  */
++uint8_t read_byte_address(uint32_t Address)
++{
++  /* store address globally for assember */
++  asm_addr = Address;
++
++  /* use inline assembler to read from 16b/24b address */
++__asm
++  ldf	a,[_asm_addr+1].e
++  ld	_asm_val,a
++__endasm;
++
++  /* return read byte */
++  return(asm_val);
++  
++}
++
++#endif // _SDCC_
++
++/**
++  * @}
++  */
++  
++
++
+ /** @addtogroup FLASH_Public_functions
+   * @{
+   */
+@@ -167,7 +240,12 @@ void FLASH_EraseByte(uint32_t Address)
+   assert_param(IS_FLASH_ADDRESS_OK(Address));
+   
+   /* Erase byte */
++#ifndef _SDCC_
+   *(PointerAttr uint8_t*) (MemoryAddressCast)Address = FLASH_CLEAR_BYTE; 
++#else
++  write_byte_address(Address, FLASH_CLEAR_BYTE);    // SDCC patch: required for far pointers
++#endif // _SDCC_
++
+ }
+ 
+ /**
+@@ -182,7 +260,14 @@ void FLASH_ProgramByte(uint32_t Address,
+ {
+   /* Check parameters */
+   assert_param(IS_FLASH_ADDRESS_OK(Address));
++
++  /* Program byte */
++#ifndef _SDCC_
+   *(PointerAttr uint8_t*) (MemoryAddressCast)Address = Data;
++#else
++  write_byte_address(Address, Data);    // SDCC patch: required for far pointers
++#endif // _SDCC_
++
+ }
+ 
+ /**
+@@ -198,7 +283,11 @@ uint8_t FLASH_ReadByte(uint32_t Address)
+   assert_param(IS_FLASH_ADDRESS_OK(Address));
+   
+   /* Read byte */
++#ifndef _SDCC_
+   return(*(PointerAttr uint8_t *) (MemoryAddressCast)Address); 
++#else
++  return(read_byte_address(Address));    // SDCC patch: required for far pointers
++#endif // _SDCC_
+ }
+ 
+ /**
+@@ -218,6 +307,7 @@ void FLASH_ProgramWord(uint32_t Address,
+   FLASH->CR2 |= FLASH_CR2_WPRG;
+   FLASH->NCR2 &= (uint8_t)(~FLASH_NCR2_NWPRG);
+   
++#ifndef _SDCC_
+   /* Write one byte - from lowest address*/
+   *((PointerAttr uint8_t*)(MemoryAddressCast)Address)       = *((uint8_t*)(&Data));
+   /* Write one byte*/
+@@ -226,6 +316,12 @@ void FLASH_ProgramWord(uint32_t Address,
+   *(((PointerAttr uint8_t*)(MemoryAddressCast)Address) + 2) = *((uint8_t*)(&Data)+2); 
+   /* Write one byte - from higher address*/
+   *(((PointerAttr uint8_t*)(MemoryAddressCast)Address) + 3) = *((uint8_t*)(&Data)+3); 
++#else
++  write_byte_address(Address    , *((uint8_t*)(&Data)));    // SDCC patch: required for far pointers
++  write_byte_address(Address + 1, *((uint8_t*)(&Data)+1));
++  write_byte_address(Address + 2, *((uint8_t*)(&Data)+2));
++  write_byte_address(Address + 3, *((uint8_t*)(&Data)+3));
++#endif // _SDCC_
+ }
+ 
+ /**
+@@ -270,7 +366,7 @@ void FLASH_ProgramOptionByte(uint16_t Ad
+ void FLASH_EraseOptionByte(uint16_t Address)
+ {
+   /* Check parameter */
+-  assert_param(IS_OPTION_BYTE_ADDRESS_OK(Address));
++  //assert_param(IS_OPTION_BYTE_ADDRESS_OK(Address));
+   
+   /* Enable write access to option bytes */
+   FLASH->CR2 |= FLASH_CR2_OPT;
+@@ -692,7 +788,11 @@ IN_RAM(void FLASH_ProgramBlock(uint16_t 
+   /* Copy data bytes from RAM to FLASH memory */
+   for(Count = 0; Count < FLASH_BLOCK_SIZE; Count++)
+   {
++#ifndef _SDCC_
+     *((PointerAttr uint8_t*) (MemoryAddressCast)startaddress + Count) = ((uint8_t)(Buffer[Count]));
++#else
++    write_byte_address(startaddress + Count, ((uint8_t)(Buffer[Count])));    // SDCC patch: required for far pointers
++#endif // _SDCC_
+   }
+ }
+ 

@@ -1,20 +1,37 @@
 SDCC=sdcc
 SDLD=sdld
-OBJECTS=blinky.ihx uart.ihx
-OBJECT=blinky
+
+SRC=$(wildcard *.c)
+SRC:=$(wildcard periph/src/*.c)
+
+OBJECT=uart
+OBJS=$(SRC:.c=.o)
+
+CFLAGS=-I periph/inc -DSTM8S103
 
 .PHONY: all clean flash
 
-all: $(OBJECTS)
+all: $(OBJS)
 
 clean:
-	rm -f $(OBJECTS)
+	rm -f $(OBJS)
 	rm *.lst *.rel *.map
 	rm *.rst *.lk *.sym
-	rm *.asm
+	rm *.asm *.o *.ihx
+	
+
+bin: $(OBJECT).bin
+	stm8flash -cstlinkv2  -pstm8s103 -s eeprom -w $(OBJECT).bin 
 
 flash: $(OBJECT).ihx
-	stm8flash -cstlink -pstm8l150 -w $(OBJECT).ihx
+	stm8flash -cstlinkv2  -pstm8s103 -w $(OBJECT).ihx 
 
-%.ihx: %.c
-	$(SDCC) -lstm8 -mstm8 --out-fmt-ihx $(CFLAGS) $(LDFLAGS) $<
+%.bin: %.ihx
+	objcopy -Iihex -Obinary $(OBJECT).ihx $(OBJECT).bin
+
+%.ihx: %.o
+	echo "test"
+	
+%.o: %.c
+	$(SDCC) -lstm8 -mstm8 $(CFLAGS) $(LDFLAGS) -c $< -o $@
+	#$(SDCC) -lstm8 -mstm8 $(CFLAGS) $(LDFLAGS) $<
